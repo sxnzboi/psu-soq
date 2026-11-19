@@ -1,0 +1,10 @@
+[build]
+  command = "mkdir -p dist && cp index.html dist/index.html && cp -R pics dist/pics"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+  force = true
