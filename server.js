@@ -819,7 +819,13 @@ export async function handleApi(req, res, url) {
         return json(res, 200, { ok: true, message: 'ลบผลงานเรียบร้อยแล้ว' });
       }
       if (judgeMatch) {
-        const deleted = await supabaseRequest('DELETE', restQuery('app_users', { id: `eq.${judgeMatch[1]}`, role: 'eq.judge', select: 'id' }));
+        const judgeId = judgeMatch[1];
+        // Clean up dependent rows explicitly as well as relying on FK cascades.
+        // Existing deployments may have been created from an older schema where
+        // these constraints were not yet cascading.
+        await supabaseRequest('DELETE', restQuery('submission_scores', { judge_user_id: `eq.${judgeId}` }));
+        await supabaseRequest('DELETE', restQuery('app_sessions', { user_id: `eq.${judgeId}` }));
+        const deleted = await supabaseRequest('DELETE', restQuery('app_users', { id: `eq.${judgeId}`, role: 'eq.judge', select: 'id' }));
         if (!deleted?.length) return json(res, 404, { error: 'ไม่พบบัญชีกรรมการนี้' });
         return json(res, 200, { ok: true });
       }
