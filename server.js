@@ -41,7 +41,11 @@ function supabaseConfig() {
 }
 
 class SupabaseError extends Error {
-  constructor(status) { super(`Supabase request failed (${status})`); this.status = status; }
+  constructor(status, payload = {}) {
+    super(`Supabase request failed (${status})`);
+    this.status = status;
+    this.code = payload?.code || '';
+  }
 }
 
 async function supabaseRequest(method, resource, payload, options = {}) {
@@ -60,7 +64,11 @@ async function supabaseRequest(method, resource, payload, options = {}) {
     signal: AbortSignal.timeout(options.timeout || 15_000),
   }).catch(() => { throw new Error('เชื่อมต่อ Supabase ไม่สำเร็จ'); });
   const raw = await response.text();
-  if (!response.ok) throw new SupabaseError(response.status);
+  if (!response.ok) {
+    let payload = {};
+    try { payload = JSON.parse(raw); } catch { /* retain status-only error */ }
+    throw new SupabaseError(response.status, payload);
+  }
   return raw ? JSON.parse(raw) : null;
 }
 
@@ -161,9 +169,19 @@ async function uploadStorageObject(objectPath, content, contentType) {
 }
 async function deleteStorageObjects(paths) {
   if (!paths.length) return;
+  for (const objectPath of paths) signedUrlCache.delete(objectPath);
   try { await storageRequest('object/awards-submissions', 'DELETE', JSON.stringify({ prefixes: paths })); } catch { /* best effort cleanup */ }
 }
 const signedUrlCache = new Map();
+const FILE_CACHE_MAX_ENTRIES = 1000;
+function cacheFileValue(key, value) {
+  if (!signedUrlCache.has(key) && signedUrlCache.size >= FILE_CACHE_MAX_ENTRIES) {
+    const oldestKey = signedUrlCache.keys().next().value;
+    if (oldestKey !== undefined) signedUrlCache.delete(oldestKey);
+  }
+  signedUrlCache.delete(key);
+  signedUrlCache.set(key, value);
+}
 
 async function createSignedFileUrl(objectPath) {
   if (!objectPath) return '';
@@ -181,7 +199,7 @@ async function createSignedFileUrl(objectPath) {
     if (signed.startsWith('/storage/v1/')) signed = `${supabaseConfig().url}${signed}`;
     else signed = `${supabaseConfig().url}/storage/v1${signed.startsWith('/') ? signed : `/${signed}`}`;
   }
-  signedUrlCache.set(objectPath, { url: signed, expiresAt: now + 86400_000 * 15 });
+  cacheFileValue(objectPath, { url: signed, expiresAt: now + 86400_000 * 15 });
   return signed;
 }
 
@@ -558,12 +576,14 @@ export async function handleApi(req, res, url) {
         if (!['admin', 'judge'].includes(user.role)) return json(res, 403, { error: 'ไม่มีสิทธิ์เปิดไฟล์' });
         const column = `${files[2]}_file_path`;
         const cacheKey = `sub:${files[1]}:${column}`;
-        let filePath = signedUrlCache.get(cacheKey);
+        const now = Date.now();
+        const cachedPath = signedUrlCache.get(cacheKey);
+        let filePath = cachedPath?.expiresAt > now ? cachedPath.filePath : null;
         if (!filePath) {
           const rows = await supabaseRequest('GET', restQuery('submissions', { select: column, id: `eq.${files[1]}`, limit: '1' }));
           if (!rows?.length || !rows[0][column]) return json(res, 404, { error: 'ไม่พบไฟล์ผลงานนี้' });
           filePath = rows[0][column];
-          signedUrlCache.set(cacheKey, filePath);
+          cacheFileValue(cacheKey, { filePath, expiresAt: now + 5 * 60_000 });
         }
         return json(res, 200, { url: await createSignedFileUrl(filePath) });
       }
@@ -812,6 +832,9 @@ export async function handleApi(req, res, url) {
         if (!rows?.length) return json(res, 404, { error: 'ไม่พบผลงานนี้' });
         const sub = rows[0];
         const filesToDelete = [sub.proposal_file_path, sub.presentation_file_path].filter(Boolean);
+        for (const key of signedUrlCache.keys()) {
+          if (key.startsWith(`sub:${id}:`)) signedUrlCache.delete(key);
+        }
         if (filesToDelete.length) {
           await deleteStorageObjects(filesToDelete);
         }
@@ -825,6 +848,12 @@ export async function handleApi(req, res, url) {
         // these constraints were not yet cascading.
         await supabaseRequest('DELETE', restQuery('submission_scores', { judge_user_id: `eq.${judgeId}` }));
         await supabaseRequest('DELETE', restQuery('app_sessions', { user_id: `eq.${judgeId}` }));
+        try {
+          await supabaseRequest('PATCH', restQuery('app_settings', { results_approved_by: `eq.${judgeId}` }), { results_approved_by: null });
+        } catch (error) {
+          // Older database instances may not have this optional column yet.
+          if (!(error instanceof SupabaseError) || !['42703', 'PGRST204'].includes(error.code)) throw error;
+        }
         const deleted = await supabaseRequest('DELETE', restQuery('app_users', { id: `eq.${judgeId}`, role: 'eq.judge', select: 'id' }));
         if (!deleted?.length) return json(res, 404, { error: 'ไม่พบบัญชีกรรมการนี้' });
         return json(res, 200, { ok: true });

@@ -47,7 +47,7 @@ This file maintains a persistent, machine-readable and human-readable record of 
 
 ## 2. Changelog & Work History
 
-### [2026-11-18] - Optimization: High-Performance File Viewing & Dual-Layer Caching
+### [2026-11-18] - Optimization: Reliable File Viewing with Expiring Links
 
 #### 2.10 Performance Optimization: Instant File Viewing
 * **User Feedback**: "ฉันดูไฟล์ผลงานรู้สึกว่าตอบสนองช้า ทำให้ไวขึ้นได้ไหม" (File viewing responds slowly, make it faster).
@@ -56,13 +56,15 @@ This file maintains a persistent, machine-readable and human-readable record of 
   2. **No Visual Feedback**: The button remained static during the API request, making users feel the application froze or was unresponsive.
   3. **Duplicate Requests**: Clicking the same file repeatedly re-generated signed URLs from scratch each time.
 * **Optimizations Implemented**:
-  1. **Server-Side In-Memory Signed URL Cache (`signedUrlCache`)**:
-     - Caches both `filePath` and generated `signedUrl` in memory on the server with a 15-day TTL.
-     - Subsequent file requests bypass Supabase DB and Storage signing entirely, responding in **< 1 ms**.
-  2. **Client-Side In-Memory URL Cache (`clientFileUrlCache`)**:
-     - Caches opened file URLs directly in the browser. Clicking a file that has been opened before launches in a new tab **instantly (0 ms)** without making any network request.
-  3. **Immediate Visual Feedback**:
-     - Button changes to `กำลังเปิด...` and disables pointer events immediately upon click, giving instant tactile feedback and preventing duplicate clicks.
+  1. **Server-Side Signed URL Cache (`signedUrlCache`)**:
+     - Signed URLs are cached for 15 days, while each URL itself is valid for 30 days; files remain private in Storage.
+     - Submission file paths use a short 5-minute cache. The server caps this cache at 1,000 entries and clears entries when a submission is deleted.
+  2. **No Client-Side Signed URL Cache**:
+     - The browser requests a fresh URL when a file is opened. This avoids reusing a URL after it expires.
+  3. **Reliable Browser Opening**:
+     - A new tab is opened synchronously from the click. If the browser blocks pop-ups, the page stays in place and shows a separate link the user can click.
+  4. **Immediate Visual Feedback**:
+     - The button changes to `กำลังเปิด...` and is disabled during the request to prevent duplicate clicks.
 
 ### [2026-11-18] - Fix: "Cannot set properties of null (setting 'textContent')"
 
