@@ -1,9 +1,0 @@
-{
-  "judges": [
-    { "id": 1, "name": "นาย A", "email": "a@example.com" },
-    { "id": 2, "name": "นาง B", "email": "b@example.com" }
-  ],
-  "admin_codes": [
-    { "code": "03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e5b2c8b9f2b44f8", "role": "admin" }
-  ]
-}
